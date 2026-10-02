@@ -242,7 +242,7 @@ export default function DoctorDashboard({ currentDatePatients, activeDoctorFilte
                       </div>
                       <div className="flex items-end gap-3">
                         <span className="font-bold text-slate-700 whitespace-nowrap">วันที่</span>
-                        <input type="text" value={`${String(new Date().getDate()).padStart(2, '0')}/${String(new Date().getMonth() + 1).padStart(2, '0')}/${new Date().getFullYear() + 543}`} readOnly className="w-[180px] bg-transparent border-b-2 border-dashed border-slate-400 px-2 py-1 text-center font-bold text-slate-600 outline-none" />
+                        <input type="text" value={new Date().toLocaleDateString('th-TH', { day: 'numeric', month: 'long', year: 'numeric' })} readOnly className="w-[180px] bg-transparent border-b-2 border-dashed border-slate-400 px-2 py-1 text-center font-bold text-slate-600 outline-none" />
                       </div>
                     </div>
                   </div>

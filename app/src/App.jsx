@@ -221,10 +221,34 @@ export default function App() {
 
   // Filter patients based on export date range
   const patientsToExport = useMemo(() => {
-    return patients.filter(p => {
-      if (!p.date) return false;
-      return p.date >= exportStartDate && p.date <= exportEndDate;
+    const exportedList = [];
+
+    // Helper: '28/09/2569' -> '2026-09-28'
+    const parseThaiDateToISO = (thaiDateStr) => {
+      if (!thaiDateStr) return null;
+      const parts = thaiDateStr.split('/');
+      if (parts.length !== 3) return null;
+      const y = parseInt(parts[2], 10) - 543;
+      const m = parts[1].padStart(2, '0');
+      const d = parts[0].padStart(2, '0');
+      return `${y}-${m}-${d}`;
+    };
+
+    patients.forEach(p => {
+      // Check first visit
+      if (p.date && p.date >= exportStartDate && p.date <= exportEndDate) {
+        exportedList.push({ ...p, isSecondVisitExport: false });
+      }
+      // Check second visit
+      if (p.delayedDate) {
+        const dDateIso = parseThaiDateToISO(p.delayedDate);
+        if (dDateIso && dDateIso >= exportStartDate && dDateIso <= exportEndDate) {
+          exportedList.push({ ...p, isSecondVisitExport: true });
+        }
+      }
     });
+
+    return exportedList;
   }, [patients, exportStartDate, exportEndDate]);
 
   const handleExportExcel = () => {
@@ -244,17 +268,20 @@ export default function App() {
         [`ข้อมูลรายชื่อพนักงานตรวจสุขภาพ ช่วงวันที่ ${formatDateDisplay(exportStartDate)} ถึง ${formatDateDisplay(exportEndDate)}`],
         [], // Empty row for spacing
         // Header Row 1
-        ['ลำดับ', 'ประเภทพนักงาน', 'รหัสพนักงาน', 'ชื่อ - สกุล', 'แผนก/ห้อง', 'วันที่เริ่มงาน', 'รายการตรวจสุขภาพ', '', 'หมายเหตุ'],
+        ['ลำดับ', 'ประเภทพนักงาน', 'รหัสพนักงาน', 'ชื่อ - สกุล', 'แผนก/ห้อง', 'วันที่เริ่มงาน', 'วันที่เลื่อนเริ่มงาน', 'รายการตรวจสุขภาพ', '', '', '', 'หมายเหตุ'],
         // Header Row 2
-        ['', '', '', '', '', '', 'สารเสพติด', 'การตั้งครรภ์', '']
+        ['', '', '', '', '', '', '', 'ตรวจทั่วไป', 'ตรวจปอด', 'สารเสพติด', 'การตั้งครรภ์', '']
       ];
 
       // 2. Map Patients Data
       patientsToExport.forEach((pt, index) => {
-        const generalVal = (pt.docResult === 'HEALTHY' || pt.docResult === 'WARNING' || pt.docResult === 'DANGER') ? 1 : '-';
-        const lungVal = pt.flow ? 1 : '-';
-        const drugVal = (pt.mamp === 'Negative' || pt.mamp === 'Positive') ? (pt.mampKitQty || 1) : '-';
-        const pregVal = (pt.upt === 'Negative' || pt.upt === 'Positive') ? (pt.uptKitQty || 1) : '-';
+        const isSecondVisit = pt.isSecondVisitExport;
+        const isNurseDone = !['WAITING_NURSE', 'HOLD'].includes(pt.status);
+
+        const generalVal = (!isSecondVisit && isNurseDone && pt.nurseName && pt.nurseName !== '-') ? 1 : '-';
+        const lungVal = (!isSecondVisit && isNurseDone && pt.flow && pt.flow !== '-') ? 1 : '-';
+        const drugVal = (isNurseDone && (pt.mamp === 'Negative' || pt.mamp === 'Positive')) ? (pt.mampKitQty || 1) : '-';
+        const pregVal = (isNurseDone && (pt.upt === 'Negative' || pt.upt === 'Positive')) ? (pt.uptKitQty || 1) : '-';
 
         if (generalVal !== '-') totalGeneral += generalVal;
         if (lungVal !== '-') totalLung += lungVal;
@@ -262,11 +289,13 @@ export default function App() {
         if (pregVal !== '-') totalPregnancy += pregVal;
 
         const kitReasons = [];
-        if (pt.mampKitQty > 1 && pt.mampKitReason) {
-          kitReasons.push(`สารเสพติด(${pt.mampKitQty}ชุด): ${pt.mampKitReason}`);
+        if (pt.mampKitQty > 1) {
+          const rounds = Array.from({ length: pt.mampKitQty }).map((_, i) => `รอบ ${i + 1}.${pt.mampResults?.[i] || 'ไม่ระบุ'}`).join(' ');
+          kitReasons.push(`สารเสพติด(${pt.mampKitQty}ชุด): ${rounds}`);
         }
-        if (pt.uptKitQty > 1 && pt.uptKitReason) {
-          kitReasons.push(`ครรภ์(${pt.uptKitQty}ชุด): ${pt.uptKitReason}`);
+        if (pt.uptKitQty > 1) {
+          const rounds = Array.from({ length: pt.uptKitQty }).map((_, i) => `รอบ ${i + 1}.${pt.uptResults?.[i] || 'ไม่ระบุ'}`).join(' ');
+          kitReasons.push(`ครรภ์(${pt.uptKitQty}ชุด): ${rounds}`);
         }
         const noteVal = kitReasons.length > 0 ? kitReasons.join(' | ') : '-';
 
@@ -277,6 +306,15 @@ export default function App() {
 
         const prefix = pt.gender === 'M' ? 'นาย ' : (pt.gender === 'F' ? 'นางสาว ' : '');
 
+        // Helper to format DD/MM/YYYY to Thai date
+        const formatDelayedDate = (dDate) => {
+          if (!dDate) return '-';
+          const parts = dDate.split('/');
+          if (parts.length !== 3) return dDate;
+          const months = ["มกราคม", "กุมภาพันธ์", "มีนาคม", "เมษายน", "พฤษภาคม", "มิถุนายน", "กรกฎาคม", "สิงหาคม", "กันยายน", "ตุลาคม", "พฤศจิกายน", "ธันวาคม"];
+          return `${parseInt(parts[0], 10)} ${months[parseInt(parts[1], 10) - 1]} ${parts[2]}`;
+        };
+
         wsData.push([
           index + 1,
           'สัญญาจ้าง', // Mock Employee Type
@@ -284,6 +322,9 @@ export default function App() {
           `${prefix}${pt.name}`,
           pt.department || pt.position || '-',
           pt.date ? formatDateThaiFull(pt.date) : '-',
+          pt.delayedDate ? formatDelayedDate(pt.delayedDate) : '-',
+          generalVal,
+          lungVal,
           drugVal,
           pregVal,
           noteVal
@@ -292,7 +333,9 @@ export default function App() {
 
       // Add Total Row
       wsData.push([
-        'รวมจำนวนที่ใช้ (รายการ)', '', '', '', '', '',
+        'รวมจำนวนที่ใช้ (รายการ)', '', '', '', '', '', '',
+        totalGeneral,
+        totalLung,
         totalDrug,
         totalPregnancy,
         ''
@@ -336,7 +379,7 @@ export default function App() {
             // Headers
             cell.s.font = { name: 'Arial', sz: 10, bold: true };
             cell.s.border = borderAll;
-            if (C >= 6 && C <= 7) {
+            if (C >= 7 && C <= 10) {
               cell.s.fill = { fgColor: { rgb: "E2EFDA" } }; // Light Green
             } else {
               cell.s.fill = { fgColor: { rgb: "BDD7EE" } }; // Light Blue
@@ -347,7 +390,7 @@ export default function App() {
 
             if (R === totalRowIndex) {
               cell.s.font = { name: 'Arial', sz: 10, bold: true };
-              if (C >= 6 && C <= 7) {
+              if (C >= 7 && C <= 10) {
                 cell.s.fill = { fgColor: { rgb: "FCE4D6" } }; // Peach/Orange
               }
             }
@@ -357,16 +400,17 @@ export default function App() {
 
       // 3. Merge Cells (for headers and total row)
       ws['!merges'] = [
-        { s: { r: 0, c: 0 }, e: { r: 0, c: 8 } }, // Merge Title
+        { s: { r: 0, c: 0 }, e: { r: 0, c: 11 } }, // Merge Title
         { s: { r: 2, c: 0 }, e: { r: 3, c: 0 } }, // ลำดับ
         { s: { r: 2, c: 1 }, e: { r: 3, c: 1 } }, // ประเภทพนักงาน
         { s: { r: 2, c: 2 }, e: { r: 3, c: 2 } }, // รหัสพนักงาน
         { s: { r: 2, c: 3 }, e: { r: 3, c: 3 } }, // ชื่อ - สกุล
         { s: { r: 2, c: 4 }, e: { r: 3, c: 4 } }, // แผนก/ห้อง
         { s: { r: 2, c: 5 }, e: { r: 3, c: 5 } }, // วันที่เริ่มงาน
-        { s: { r: 2, c: 6 }, e: { r: 2, c: 7 } }, // รายการตรวจสุขภาพ (Merge 2 cols)
-        { s: { r: 2, c: 8 }, e: { r: 3, c: 8 } }, // หมายเหตุ
-        { s: { r: totalRowIndex, c: 0 }, e: { r: totalRowIndex, c: 5 } } // Merge Total Row Text
+        { s: { r: 2, c: 6 }, e: { r: 3, c: 6 } }, // วันที่เลื่อนเริ่มงาน
+        { s: { r: 2, c: 7 }, e: { r: 2, c: 10 } }, // รายการตรวจสุขภาพ (Merge 4 cols)
+        { s: { r: 2, c: 11 }, e: { r: 3, c: 11 } }, // หมายเหตุ
+        { s: { r: totalRowIndex, c: 0 }, e: { r: totalRowIndex, c: 6 } } // Merge Total Row Text
       ];
 
       // 4. Set Column Widths
@@ -377,6 +421,9 @@ export default function App() {
         { wch: 25 }, // ชื่อ - สกุล
         { wch: 20 }, // แผนก/ห้อง
         { wch: 15 }, // วันที่เริ่มงาน
+        { wch: 18 }, // วันที่เลื่อนเริ่มงาน
+        { wch: 12 }, // ตรวจทั่วไป
+        { wch: 12 }, // ตรวจปอด
         { wch: 12 }, // สารเสพติด
         { wch: 12 }, // การตั้งครรภ์
         { wch: Math.max(15, Math.ceil(maxNoteWidth * 0.75)) }, // หมายเหตุ (ปรับเผื่อภาษาไทย)
@@ -412,6 +459,8 @@ export default function App() {
     if (nurseForm.waist && nurseForm.height) {
       const ratio = (parseFloat(nurseForm.waist) / parseFloat(nurseForm.height)).toFixed(2);
       setNurseForm(prev => ({ ...prev, waistRatio: ratio, isSlim: false }));
+    } else {
+      setNurseForm(prev => ({ ...prev, waistRatio: 0 }));
     }
   }, [nurseForm.waist, nurseForm.height]);
 
@@ -447,6 +496,8 @@ export default function App() {
           setNurseForm(prev => ({ ...prev, flowPercent: pct.toFixed(0) }));
         }
       }
+    } else {
+      setNurseForm(prev => ({ ...prev, flowPercent: 0 }));
     }
   }, [nurseForm.flow, nurseForm.height, selectedPatientId, patients]);
 
@@ -908,45 +959,66 @@ export default function App() {
                       <th className="px-3 py-2.5 border-b border-r border-slate-200" rowSpan="2">ชื่อ - สกุล</th>
                       <th className="px-3 py-2.5 border-b border-r border-slate-200" rowSpan="2">แผนก/ห้อง</th>
                       <th className="px-3 py-2.5 border-b border-r border-slate-200" rowSpan="2">วันที่เริ่มงาน</th>
-                      <th className="px-3 py-2.5 border-b border-r border-slate-200 text-center" colSpan="2">รายการตรวจสุขภาพ</th>
+                      <th className="px-3 py-2.5 border-b border-r border-slate-200" rowSpan="2">วันที่เลื่อนเริ่มงาน</th>
+                      <th className="px-3 py-2.5 border-b border-r border-slate-200 text-center" colSpan="4">รายการตรวจสุขภาพ</th>
                       <th className="px-3 py-2.5 border-b border-slate-200" rowSpan="2">หมายเหตุ</th>
                     </tr>
                     <tr>
+                      <th className="px-3 py-2 border-b border-r border-slate-200 text-center bg-slate-50">ตรวจทั่วไป</th>
+                      <th className="px-3 py-2 border-b border-r border-slate-200 text-center bg-slate-50">ตรวจปอด</th>
                       <th className="px-3 py-2 border-b border-r border-slate-200 text-center bg-slate-50">สารเสพติด</th>
                       <th className="px-3 py-2 border-b border-r border-slate-200 text-center bg-slate-50">ครรภ์</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {patientsToExport.slice(0, 3).map((pt, i) => (
-                      <tr key={pt.id} className="border-b border-slate-100 bg-white hover:bg-slate-50 transition-colors">
-                        <td className="px-3 py-2.5 border-r border-slate-100 text-center font-medium text-slate-400">{i + 1}</td>
-                        <td className="px-3 py-2.5 border-r border-slate-100 text-center text-slate-600">สัญญาจ้าง</td>
-                        <td className="px-3 py-2.5 border-r border-slate-100 text-slate-600">{String(pt.id).padStart(6, '0')}</td>
-                        <td className="px-3 py-2.5 border-r border-slate-100 font-bold text-slate-700">
-                          {pt.gender === 'M' ? 'นาย ' : (pt.gender === 'F' ? 'นางสาว ' : '')}{pt.name}
-                        </td>
-                        <td className="px-3 py-2.5 border-r border-slate-100 text-slate-600">{pt.department || pt.position || '-'}</td>
-                        <td className="px-3 py-2.5 border-r border-slate-100 text-slate-600">{pt.date ? formatDateThaiFull(pt.date) : '-'}</td>
-                        <td className="px-3 py-2.5 border-r border-slate-100 text-center text-slate-600">{(pt.mamp === 'Negative' || pt.mamp === 'Positive') ? (pt.mampKitQty || 1) : '-'}</td>
-                        <td className="px-3 py-2.5 border-r border-slate-100 text-center text-slate-600">{(pt.upt === 'Negative' || pt.upt === 'Positive') ? (pt.uptKitQty || 1) : '-'}</td>
-                        <td className="px-3 py-2.5 text-slate-500">
-                          {[
-                            pt.mampKitQty > 1 && pt.mampKitReason ? `สารเสพติด(${pt.mampKitQty}ชุด): ${pt.mampKitReason}` : null,
-                            pt.uptKitQty > 1 && pt.uptKitReason ? `ครรภ์(${pt.uptKitQty}ชุด): ${pt.uptKitReason}` : null
-                          ].filter(Boolean).join(' | ') || '-'}
-                        </td>
-                      </tr>
-                    ))}
+                    {patientsToExport.slice(0, 3).map((pt, i) => {
+                      const isSecondVisit = pt.isSecondVisitExport;
+                      const isNurseDone = !['WAITING_NURSE', 'HOLD'].includes(pt.status);
+                      const generalVal = (!isSecondVisit && isNurseDone && pt.nurseName && pt.nurseName !== '-') ? 1 : '-';
+                      const lungVal = (!isSecondVisit && isNurseDone && pt.flow && pt.flow !== '-') ? 1 : '-';
+                      const drugVal = (isNurseDone && (pt.mamp === 'Negative' || pt.mamp === 'Positive')) ? (pt.mampKitQty || 1) : '-';
+                      const pregVal = (isNurseDone && (pt.upt === 'Negative' || pt.upt === 'Positive')) ? (pt.uptKitQty || 1) : '-';
+
+                      const kitReasons = [];
+                      if (pt.mampKitQty > 1) {
+                        const rounds = Array.from({ length: pt.mampKitQty }).map((_, idx) => `รอบ ${idx + 1}.${pt.mampResults?.[idx] || 'ไม่ระบุ'}`).join(' ');
+                        kitReasons.push(`สารเสพติด(${pt.mampKitQty}ชุด): ${rounds}`);
+                      }
+                      if (pt.uptKitQty > 1) {
+                        const rounds = Array.from({ length: pt.uptKitQty }).map((_, idx) => `รอบ ${idx + 1}.${pt.uptResults?.[idx] || 'ไม่ระบุ'}`).join(' ');
+                        kitReasons.push(`ครรภ์(${pt.uptKitQty}ชุด): ${rounds}`);
+                      }
+                      const noteVal = kitReasons.length > 0 ? kitReasons.join(' | ') : '-';
+
+                      return (
+                        <tr key={pt.id + (isSecondVisit ? '-delayed' : '-first')} className="border-b border-slate-100 bg-white hover:bg-slate-50 transition-colors">
+                          <td className="px-3 py-2.5 border-r border-slate-100 text-center font-medium text-slate-400">{i + 1}</td>
+                          <td className="px-3 py-2.5 border-r border-slate-100 text-center text-slate-600">สัญญาจ้าง</td>
+                          <td className="px-3 py-2.5 border-r border-slate-100 text-slate-600">{String(pt.id).padStart(6, '0')}</td>
+                          <td className="px-3 py-2.5 border-r border-slate-100 font-bold text-slate-700">
+                            {pt.gender === 'M' ? 'นาย ' : (pt.gender === 'F' ? 'นางสาว ' : '')}{pt.name}
+                          </td>
+                          <td className="px-3 py-2.5 border-r border-slate-100 text-slate-600">{pt.department || pt.position || '-'}</td>
+                          <td className="px-3 py-2.5 border-r border-slate-100 text-slate-600">{pt.date ? formatDateThaiFull(pt.date) : '-'}</td>
+                          <td className="px-3 py-2.5 border-r border-slate-100 text-slate-600">{pt.delayedDate ? formatDateThaiFull(parseThaiDateToISO(pt.delayedDate)) : '-'}</td>
+                          <td className="px-3 py-2.5 border-r border-slate-100 text-center text-slate-600">{generalVal}</td>
+                          <td className="px-3 py-2.5 border-r border-slate-100 text-center text-slate-600">{lungVal}</td>
+                          <td className="px-3 py-2.5 border-r border-slate-100 text-center text-slate-600">{drugVal}</td>
+                          <td className="px-3 py-2.5 border-r border-slate-100 text-center text-slate-600">{pregVal}</td>
+                          <td className="px-3 py-2.5 text-slate-500">{noteVal}</td>
+                        </tr>
+                      );
+                    })}
                     {patientsToExport.length > 3 && (
                       <tr>
-                        <td colSpan="9" className="px-3 py-4 text-center text-slate-500 bg-slate-50/80 italic font-medium">
+                        <td colSpan="12" className="px-3 py-4 text-center text-slate-500 bg-slate-50/80 italic font-medium">
                           ...ยังมีข้อมูลที่ถูกซ่อนไว้อีก {patientsToExport.length - 3} รายการ (จะแสดงครบใน Excel)
                         </td>
                       </tr>
                     )}
                     {patientsToExport.length === 0 && (
                       <tr>
-                        <td colSpan="9" className="px-3 py-10 text-center bg-white">
+                        <td colSpan="12" className="px-3 py-10 text-center bg-white">
                           <div className="flex flex-col items-center justify-center opacity-40">
                             <Search size={32} className="mb-2" />
                             <span className="font-semibold text-sm">ไม่พบข้อมูลผู้รับการตรวจในช่วงเวลาที่คุณเลือก</span>

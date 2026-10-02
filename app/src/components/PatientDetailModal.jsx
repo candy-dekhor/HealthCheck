@@ -29,7 +29,7 @@ export default function PatientDetailModal({ viewDetailPatient, setViewDetailPat
                 <span className="font-bold text-slate-500">UPT (ตรวจการตั้งครรภ์):</span>{' '}
                 <span className="font-semibold">{viewDetailPatient.upt || '-'}</span>
               </div>
-              {activeTab === 'HR' && viewDetailPatient.uptKitQty > 1 && (
+              {(activeTab === 'HR' || activeTab === 'REGISTRATION') && viewDetailPatient.uptKitQty > 1 && (
                 <div className="mt-2 text-sm bg-white p-3 rounded-xl border border-slate-200">
                   <div className="text-slate-600 font-bold mb-2">รายละเอียดการตรวจ ({viewDetailPatient.uptKitQty} รอบ):</div>
                   <div className="space-y-2">
@@ -50,7 +50,7 @@ export default function PatientDetailModal({ viewDetailPatient, setViewDetailPat
                 <span className="font-bold text-slate-500">MAMP Test (ตรวจสารเสพติด):</span>{' '}
                 <span className="font-semibold">{viewDetailPatient.mamp || '-'}</span>
               </div>
-              {activeTab === 'HR' && viewDetailPatient.mampKitQty > 1 && (
+              {(activeTab === 'HR' || activeTab === 'REGISTRATION') && viewDetailPatient.mampKitQty > 1 && (
                 <div className="mt-2 text-sm bg-white p-3 rounded-xl border border-slate-200">
                   <div className="text-slate-600 font-bold mb-2">รายละเอียดการตรวจ ({viewDetailPatient.mampKitQty} รอบ):</div>
                   <div className="space-y-2">
